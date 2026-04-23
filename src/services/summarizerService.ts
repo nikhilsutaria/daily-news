@@ -9,7 +9,7 @@ export class SummarizerService implements ISummarizerService {
   constructor(apiKey: string) {
     const genAI = new GoogleGenerativeAI(apiKey);
     this.model = genAI.getGenerativeModel({
-      model: "gemini-2.0-flash",
+      model: "gemini-flash-latest",
       systemInstruction: SYSTEM_PROMPT,
     });
   }
