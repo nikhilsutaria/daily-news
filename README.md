@@ -1,175 +1,161 @@
 # Daily News - HackerNews Summarizer PWA
 
-A Progressive Web App that fetches top stories from Hacker News, summarizes each article using AI, and presents them in a clean, readable format.
+A Progressive Web App that fetches the #1 top story from Hacker News daily, summarizes it using AI, and presents it in a clean, readable format.
 
-## Features
+## Tech Stack (All Free Tier)
 
-- 📰 Fetch top stories from Hacker News
-- 🤖 AI-powered article summarization (one paragraph per article)
-- 📱 Progressive Web App (installable, offline support)
-- ⚡ Fast and responsive UI
-- 💾 Smart caching to avoid re-summarizing articles
-- 🆓 Completely free to host and run
-
-## Tech Stack
-
-### Frontend
-- **Framework**: Next.js 14+ (App Router)
-  - Built-in PWA support with `next-pwa`
-  - Server-side rendering for better performance
-  - React-based, modern development experience
-- **Styling**: Tailwind CSS
-  - Utility-first CSS framework
-  - Responsive design out of the box
-- **UI Components**: shadcn/ui (optional)
-  - Beautiful, accessible components
-  - Built on Radix UI
-
-### Backend & APIs
-- **News Source**: Hacker News API
-  - Official API: `https://hacker-news.firebaseio.com/v0/`
-  - Endpoints: `/topstories`, `/item/{id}`
-  - Completely free, no rate limits
-- **AI Summarization**: Google Gemini API
-  - Free tier: 15 requests/minute, 1500 requests/day
-  - High-quality text summarization
-  - No credit card required for free tier
-- **Article Content**: Jina AI Reader API
-  - Free tier: Convert any URL to clean markdown
-  - API: `https://r.jina.ai/{url}`
-  - Fallback: Mozilla Readability for client-side parsing
-
-### Database & Storage
-- **Database**: Supabase (PostgreSQL)
-  - Free tier: 500MB database, 1GB file storage
-  - Used for caching article summaries
-  - Prevents re-summarizing the same articles
-  - Schema:
-    ```sql
-    articles (
-      id: bigint (HN story ID),
-      title: text,
-      url: text,
-      summary: text,
-      created_at: timestamp,
-      hn_score: int
-    )
-    ```
-
-### Hosting & Deployment
-- **Hosting**: Vercel
-  - Free tier: unlimited personal projects
-  - Automatic CI/CD from GitHub
-  - Edge functions for API routes
-  - Automatic PWA optimization
-
-### PWA Features
-- **Service Worker**: For offline support
-- **Web Manifest**: For installability
-- **Caching Strategy**: 
-  - Cache-first for static assets
-  - Network-first for API calls with cache fallback
-- **Offline Mode**: Show cached summaries when offline
+| Layer | Technology | Free Tier Limits |
+|-------|-----------|-----------------|
+| Frontend | Next.js 14+ (App Router) + Tailwind CSS | - |
+| AI Summary | Google Gemini 2.0 Flash | 1,500 req/day |
+| Content Extraction | Jina AI Reader API | 200 req/hour |
+| News Source | Hacker News Firebase API | Unlimited |
+| Database | Supabase PostgreSQL | 500MB |
+| Hosting | Vercel | 2 cron jobs, 100GB BW |
+| PWA | @ducanh2912/next-pwa | - |
 
 ## Architecture
 
 ```
-┌─────────────────┐
-│   Next.js App   │
-│   (Frontend)    │
-└────────┬────────┘
-         │
-         ├─────────────────────────────────┐
-         │                                 │
-         ▼                                 ▼
-┌────────────────┐              ┌──────────────────┐
-│  Hacker News   │              │  Supabase DB     │
-│      API       │              │  (Cache)         │
-└────────┬───────┘              └──────────────────┘
-         │
-         ▼
-┌────────────────┐
-│  Jina Reader   │
-│      API       │
-└────────┬───────┘
-         │
-         ▼
-┌────────────────┐
-│  Gemini AI     │
-│  (Summarizer)  │
-└────────────────┘
+User -> Next.js Page (reads from Supabase only)
+
+Vercel Cron (daily 8am UTC) --> GET /api/cron --> PipelineService
+Manual trigger button -------> POST /api/trigger --> PipelineService
+
+PipelineService:
+  1. HackerNewsService.getTopStoryId() -> HN API
+  2. ArticleRepository.findById() -> Supabase (skip if exists)
+  3. HackerNewsService.getStory() -> HN API
+  4. ContentExtractor.extract() -> Jina Reader
+  5. SummarizerService.summarize() -> Gemini AI
+  6. ArticleRepository.save() -> Supabase
 ```
 
-## Data Flow
+## Design Patterns
 
-1. User opens the app
-2. Fetch top 30 stories from Hacker News API
-3. For each story:
-   - Check Supabase cache for existing summary
-   - If cached: Display immediately
-   - If not cached:
-     - Fetch article content via Jina Reader API
-     - Send to Gemini API for summarization
-     - Store summary in Supabase
-     - Display to user
-4. PWA service worker caches everything for offline access
-
-## Environment Variables
-
-```env
-# Gemini AI
-GOOGLE_GEMINI_API_KEY=your_gemini_api_key
-
-# Supabase
-NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
-
-# Optional: Jina AI (if you hit rate limits)
-JINA_API_KEY=your_jina_api_key
-```
+- **Repository Pattern**: Abstract data access (Supabase)
+- **Service Pattern**: Business logic layer (HN, Jina, Gemini, Pipeline)
+- **Constructor Injection**: All dependencies injected via constructor
+- **Interface-first**: Every service has an interface for testability
+- **Composition Root**: API route handlers wire real implementations
 
 ## Getting Started
 
+### Prerequisites
+- Node.js 18+
+- Supabase account (free)
+- Google Gemini API key (free)
+
+### 1. Clone and install
+
 ```bash
-# Install dependencies
+git clone <repo-url>
+cd daily-news
 npm install
-
-# Set up environment variables
-cp .env.example .env.local
-# Edit .env.local with your API keys
-
-# Run development server
-npm run dev
-
-# Build for production
-npm run build
-
-# Deploy to Vercel
-vercel deploy
 ```
 
-## Free Tier Limits
+### 2. Set up Supabase
 
-- **Gemini API**: 1,500 requests/day (sufficient for ~50 users/day reading 30 articles)
-- **Supabase**: 500MB database (can store ~100,000 summaries)
-- **Vercel**: 100GB bandwidth/month (plenty for personal use)
-- **Jina Reader**: 200 requests/hour on free tier
+Create a Supabase project and run this SQL in the SQL Editor:
 
-## Cost Optimization
+```sql
+CREATE TABLE articles (
+  id            BIGINT PRIMARY KEY,
+  title         TEXT NOT NULL,
+  url           TEXT,
+  summary       TEXT NOT NULL,
+  hn_score      INTEGER NOT NULL DEFAULT 0,
+  author        TEXT NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  summarized_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
-- Summaries are cached in Supabase (never re-summarize)
-- Service worker caches UI and data for offline use
-- Batch summarization: summarize on-demand when user scrolls/clicks
-- Optional: summarize only top 10-20 stories instead of all
+CREATE INDEX idx_articles_summarized_at ON articles (summarized_at DESC);
 
-## Future Enhancements
+ALTER TABLE articles ENABLE ROW LEVEL SECURITY;
 
-- [ ] User preferences (number of stories, categories)
-- [ ] Dark mode
-- [ ] Share summaries
-- [ ] Save favorites
-- [ ] Push notifications for hot topics
-- [ ] Filter by topic/keyword
+CREATE POLICY "Public read access" ON articles FOR SELECT USING (true);
+CREATE POLICY "Service insert access" ON articles FOR INSERT WITH CHECK (true);
+```
+
+### 3. Configure environment
+
+```bash
+cp .env.example .env.local
+```
+
+Edit `.env.local` with your actual values:
+- `NEXT_PUBLIC_SUPABASE_URL` - from Supabase project settings
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY` - from Supabase project settings
+- `GOOGLE_GEMINI_API_KEY` - from Google AI Studio
+- `TRIGGER_SECRET` - any secret string for manual trigger auth
+- `CRON_SECRET` - any secret string for cron job auth
+- `JINA_API_KEY` - (optional) for higher Jina rate limits
+
+### 4. Run locally
+
+```bash
+npm run dev
+```
+
+### 5. Trigger manually
+
+```bash
+curl -X POST http://localhost:3000/api/trigger \
+  -H "Authorization: Bearer <your-trigger-secret>"
+```
+
+Or use the "Trigger Summary" button in the UI (prompts for secret).
+
+### 6. Deploy to Vercel
+
+1. Push to GitHub
+2. Import project in Vercel
+3. Set all environment variables in Vercel dashboard
+4. Deploy - cron job will auto-register from `vercel.json`
+
+## Scripts
+
+```bash
+npm run dev          # Start development server
+npm run build        # Production build
+npm run start        # Start production server
+npm test             # Run tests
+npm run test:watch   # Run tests in watch mode
+npm run test:coverage # Run tests with coverage report
+```
+
+## API Endpoints
+
+| Method | Endpoint | Auth | Description |
+|--------|---------|------|-------------|
+| POST | /api/trigger | Bearer TRIGGER_SECRET | Manual trigger |
+| GET | /api/cron | Bearer CRON_SECRET | Vercel cron (daily 8am UTC) |
+
+## Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| NEXT_PUBLIC_SUPABASE_URL | Yes | Supabase project URL |
+| NEXT_PUBLIC_SUPABASE_ANON_KEY | Yes | Supabase anon key |
+| GOOGLE_GEMINI_API_KEY | Yes | Gemini API key |
+| TRIGGER_SECRET | Yes | Manual trigger auth secret |
+| CRON_SECRET | Yes | Vercel cron auth secret |
+| JINA_API_KEY | No | Jina Reader API key |
+
+For local development, use `.env.local` (gitignored). For production, set in Vercel dashboard.
+
+## Testing
+
+57 tests across 12 test suites with 99%+ coverage:
+
+```
+-----------------------|---------|----------|---------|---------|
+File                   | % Stmts | % Branch | % Funcs | % Lines |
+-----------------------|---------|----------|---------|---------|
+All files              |   99.35 |    93.75 |     100 |   99.35 |
+-----------------------|---------|----------|---------|---------|
+```
 
 ## License
 
