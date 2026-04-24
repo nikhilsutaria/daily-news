@@ -1,3 +1,4 @@
+import { createLogger } from "@/lib/logger";
 import { IArticleRepository } from "@/repositories/interfaces";
 import { PipelineResult } from "@/types";
 import {
@@ -6,6 +7,8 @@ import {
   IPipelineService,
   ISummarizerService,
 } from "./interfaces";
+
+const log = createLogger("PipelineService");
 
 export class PipelineService implements IPipelineService {
   constructor(
@@ -16,11 +19,14 @@ export class PipelineService implements IPipelineService {
   ) {}
 
   async run(): Promise<PipelineResult> {
+    log.info("Pipeline started");
+
     try {
       const topId = await this.hnService.getTopStoryId();
 
       const existing = await this.articleRepo.findById(topId);
       if (existing) {
+        log.info("Article already exists, skipping", { storyId: topId });
         return {
           status: "skipped",
           article: existing,
@@ -31,6 +37,7 @@ export class PipelineService implements IPipelineService {
       const story = await this.hnService.getStory(topId);
 
       if (!story.url) {
+        log.warn("Story has no external URL", { storyId: topId, title: story.title });
         return {
           status: "skipped",
           message: `Story ${topId} has no external URL`,
@@ -40,6 +47,7 @@ export class PipelineService implements IPipelineService {
       const content = await this.extractor.extract(story.url);
 
       if (!content) {
+        log.error("Content extraction returned empty", null, { storyId: topId, url: story.url });
         return {
           status: "error",
           message: `Failed to extract content from ${story.url}`,
@@ -58,12 +66,14 @@ export class PipelineService implements IPipelineService {
         created_at: new Date(story.time * 1000).toISOString(),
       });
 
+      log.info("Pipeline completed successfully", { storyId: topId, title: story.title });
       return {
         status: "created",
         article,
         message: `Successfully summarized: ${story.title}`,
       };
     } catch (error) {
+      log.error("Pipeline failed with exception", error);
       return {
         status: "error",
         message:

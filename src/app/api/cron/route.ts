@@ -1,3 +1,4 @@
+import { createLogger } from "@/lib/logger";
 import { getEnv } from "@/config/env";
 import { createSupabaseClient } from "@/lib/supabase";
 import { ArticleRepository } from "@/repositories/articleRepository";
@@ -7,24 +8,43 @@ import { PipelineService } from "@/services/pipelineService";
 import { SummarizerService } from "@/services/summarizerService";
 import { NextRequest, NextResponse } from "next/server";
 
+const log = createLogger("api/cron");
+
 export async function GET(request: NextRequest) {
-  const env = getEnv();
+  try {
+    const env = getEnv();
 
-  const authHeader = request.headers.get("authorization");
-  if (authHeader !== `Bearer ${env.cronSecret}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const authHeader = request.headers.get("authorization");
+    if (authHeader !== `Bearer ${env.cronSecret}`) {
+      log.warn("Auth failed", { headerPresent: !!authHeader });
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    log.info("Cron request authorized");
+
+    const supabase = createSupabaseClient();
+    const pipeline = new PipelineService(
+      new HackerNewsService(),
+      new ContentExtractor(env.jinaApiKey),
+      new SummarizerService(env.geminiApiKey),
+      new ArticleRepository(supabase)
+    );
+
+    const result = await pipeline.run();
+
+    if (result.status === "error") {
+      log.error("Cron pipeline error", null, { message: result.message });
+    } else {
+      log.info("Cron pipeline completed", { status: result.status, message: result.message });
+    }
+
+    const statusCode = result.status === "error" ? 500 : 200;
+    return NextResponse.json(result, { status: statusCode });
+  } catch (error) {
+    log.error("Cron unhandled error", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Internal server error" },
+      { status: 500 }
+    );
   }
-
-  const supabase = createSupabaseClient();
-  const pipeline = new PipelineService(
-    new HackerNewsService(),
-    new ContentExtractor(env.jinaApiKey),
-    new SummarizerService(env.geminiApiKey),
-    new ArticleRepository(supabase)
-  );
-
-  const result = await pipeline.run();
-
-  const statusCode = result.status === "error" ? 500 : 200;
-  return NextResponse.json(result, { status: statusCode });
 }
