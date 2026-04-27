@@ -8,42 +8,46 @@ A Progressive Web App that fetches the #1 top story from Hacker News daily, summ
 |-------|-----------|-----------------|
 | Frontend | Next.js + Tailwind CSS | - |
 | Backend | Supabase Edge Functions (Deno) | 500K invocations/month |
-| AI Summary | Google Gemini 2.0 Flash | 1,500 req/day |
+| AI Summary | Google Gemini Flash | 1,500 req/day |
 | Content Extraction | Jina AI Reader API | 200 req/hour |
 | News Source | Hacker News Firebase API | Unlimited |
 | Database | Supabase PostgreSQL | 500MB |
-| Scheduling | pg_cron (Supabase) | - |
-| Hosting | Vercel | 100GB BW |
+| Scheduling | pg_cron + pg_net (Supabase) | - |
+| Frontend Hosting | Vercel | 100GB BW |
 | PWA | @ducanh2912/next-pwa | - |
 
 ## Architecture
 
-```
-User -> Next.js Page (reads from Supabase DB)
+This project has two independently deployed parts:
 
-pg_cron (daily 8am UTC) -----> run-pipeline (Edge Function)
-Manual trigger button -------> run-pipeline (Edge Function)
+```
+src/       -> Next.js frontend (deployed on Vercel)
+supabase/  -> Edge Function + cron schedule (deployed on Supabase)
+```
+
+```
+User -> Next.js Page (reads articles from Supabase DB)
+
+pg_cron (daily 8am UTC) -----> run-pipeline Edge Function
+Manual trigger button -------> run-pipeline Edge Function
 
 run-pipeline Edge Function:
-  1. Fetch top story ID from HN API
-  2. Check if article exists in Supabase (skip if yes)
-  3. Fetch full story from HN API
-  4. Extract content via Jina Reader
-  5. Summarize via Gemini AI
-  6. Save article to Supabase
+  1. Fetch top story ID from Hacker News API
+  2. Check if article already exists in Supabase DB (skip if yes)
+  3. Fetch full story details from Hacker News API
+  4. Extract article content via Jina Reader API
+  5. Summarize content via Google Gemini API (REST)
+  6. Save article to Supabase DB
 ```
-
-The project has two parts:
-- **Frontend** (`src/`) — Next.js app deployed on Vercel, reads articles from Supabase
-- **Backend** (`supabase/`) — Edge Function + pg_cron, deployed on Supabase
 
 ## Getting Started
 
 ### Prerequisites
+
 - Node.js 18+
-- Supabase account (free) — [supabase.com](https://supabase.com)
-- Google Gemini API key (free) — [aistudio.google.com](https://aistudio.google.com)
-- Jina API key (optional) — [jina.ai](https://jina.ai)
+- A [Supabase](https://supabase.com) account (free tier)
+- A [Google Gemini API key](https://aistudio.google.com) (free tier)
+- (Optional) A [Jina AI](https://jina.ai) API key for higher rate limits
 
 ### 1. Clone and install
 
@@ -53,10 +57,10 @@ cd daily-news
 npm install
 ```
 
-### 2. Set up Supabase project
+### 2. Create a Supabase project
 
-1. Create a new project at [supabase.com/dashboard](https://supabase.com/dashboard)
-2. Run this SQL in the **SQL Editor** to create the articles table:
+1. Go to [supabase.com/dashboard](https://supabase.com/dashboard) and create a new project
+2. Once created, go to **SQL Editor** and run this to create the articles table:
 
 ```sql
 CREATE TABLE articles (
@@ -78,47 +82,58 @@ CREATE POLICY "Public read access" ON articles FOR SELECT USING (true);
 CREATE POLICY "Service insert access" ON articles FOR INSERT WITH CHECK (true);
 ```
 
-### 3. Deploy the Edge Function (backend)
+### 3. Deploy the backend (Edge Function + cron)
 
-See [`supabase/README.md`](supabase/README.md) for full instructions on deploying the Edge Function and setting up the daily cron schedule.
+Follow the step-by-step instructions in [`supabase/README.md`](supabase/README.md). This covers:
+- Linking your Supabase project
+- Setting secrets (Gemini key, trigger secret, etc.)
+- Deploying the Edge Function
+- Setting up the daily cron schedule via pg_cron
 
-### 4. Configure the frontend
+### 4. Configure and run the frontend
 
 ```bash
 cp .env.example .env.local
 ```
 
-Edit `.env.local` — you only need two values (from your Supabase project settings > API):
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+Edit `.env.local` with values from your Supabase project (Project Settings > API):
 
-### 5. Run the frontend locally
+```
+NEXT_PUBLIC_SUPABASE_URL=https://<your-project-ref>.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<your-anon-key>
+```
+
+Then start the dev server:
 
 ```bash
 npm run dev
 ```
 
-### 6. Test the trigger button
+### 5. Test it
 
-Click "Trigger Summary" in the UI and enter your `TRIGGER_SECRET` when prompted. This calls the Edge Function directly.
+- **Via UI**: Click the "Trigger Summary" button and enter your `TRIGGER_SECRET` when prompted
+- **Via curl**:
+  ```bash
+  curl -X POST https://<your-project-ref>.supabase.co/functions/v1/run-pipeline \
+    -H "Authorization: Bearer <your-trigger-secret>"
+  ```
 
-### 7. Deploy the frontend to Vercel
+### 6. Deploy the frontend to Vercel
 
 1. Push to GitHub
 2. Import the project in [Vercel](https://vercel.com)
-3. Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` in Vercel dashboard
+3. Add these environment variables in the Vercel dashboard:
+   - `NEXT_PUBLIC_SUPABASE_URL`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 4. Deploy
 
-## Scripts
+## Deployment Summary
 
-```bash
-npm run dev          # Start development server
-npm run build        # Production build
-npm run start        # Start production server
-npm test             # Run tests
-npm run test:watch   # Run tests in watch mode
-npm run test:coverage # Run tests with coverage report
-```
+| What | Where | How |
+|------|-------|-----|
+| Frontend (Next.js) | Vercel | Auto-deploys on git push |
+| Edge Function | Supabase | `npx supabase functions deploy run-pipeline --no-verify-jwt` |
+| Cron schedule | Supabase | SQL via dashboard (see [`supabase/README.md`](supabase/README.md)) |
 
 ## Environment Variables
 
@@ -126,16 +141,29 @@ npm run test:coverage # Run tests with coverage report
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| NEXT_PUBLIC_SUPABASE_URL | Yes | Supabase project URL |
-| NEXT_PUBLIC_SUPABASE_ANON_KEY | Yes | Supabase anon key |
+| `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase anon/public key |
 
 ### Backend (Edge Function) — set via `npx supabase secrets set`
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| GOOGLE_GEMINI_API_KEY | Yes | Gemini API key |
-| TRIGGER_SECRET | Yes | Auth secret for the Edge Function |
-| JINA_API_KEY | No | Jina Reader API key (higher rate limits) |
+| `GOOGLE_GEMINI_API_KEY` | Yes | Google Gemini API key |
+| `TRIGGER_SECRET` | Yes | Secret for authorizing Edge Function calls |
+| `JINA_API_KEY` | No | Jina Reader API key (higher rate limits) |
+
+> `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are automatically available inside Edge Functions — you don't need to set them.
+
+## Scripts
+
+```bash
+npm run dev            # Start development server
+npm run build          # Production build
+npm run start          # Start production server
+npm test               # Run tests
+npm run test:watch     # Run tests in watch mode
+npm run test:coverage  # Run tests with coverage report
+```
 
 ## License
 
