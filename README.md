@@ -6,45 +6,44 @@ A Progressive Web App that fetches the #1 top story from Hacker News daily, summ
 
 | Layer | Technology | Free Tier Limits |
 |-------|-----------|-----------------|
-| Frontend | Next.js 14+ (App Router) + Tailwind CSS | - |
+| Frontend | Next.js + Tailwind CSS | - |
+| Backend | Supabase Edge Functions (Deno) | 500K invocations/month |
 | AI Summary | Google Gemini 2.0 Flash | 1,500 req/day |
 | Content Extraction | Jina AI Reader API | 200 req/hour |
 | News Source | Hacker News Firebase API | Unlimited |
 | Database | Supabase PostgreSQL | 500MB |
-| Hosting | Vercel | 2 cron jobs, 100GB BW |
+| Scheduling | pg_cron (Supabase) | - |
+| Hosting | Vercel | 100GB BW |
 | PWA | @ducanh2912/next-pwa | - |
 
 ## Architecture
 
 ```
-User -> Next.js Page (reads from Supabase only)
+User -> Next.js Page (reads from Supabase DB)
 
-Vercel Cron (daily 8am UTC) --> GET /api/cron --> PipelineService
-Manual trigger button -------> POST /api/trigger --> PipelineService
+pg_cron (daily 8am UTC) -----> run-pipeline (Edge Function)
+Manual trigger button -------> run-pipeline (Edge Function)
 
-PipelineService:
-  1. HackerNewsService.getTopStoryId() -> HN API
-  2. ArticleRepository.findById() -> Supabase (skip if exists)
-  3. HackerNewsService.getStory() -> HN API
-  4. ContentExtractor.extract() -> Jina Reader
-  5. SummarizerService.summarize() -> Gemini AI
-  6. ArticleRepository.save() -> Supabase
+run-pipeline Edge Function:
+  1. Fetch top story ID from HN API
+  2. Check if article exists in Supabase (skip if yes)
+  3. Fetch full story from HN API
+  4. Extract content via Jina Reader
+  5. Summarize via Gemini AI
+  6. Save article to Supabase
 ```
 
-## Design Patterns
-
-- **Repository Pattern**: Abstract data access (Supabase)
-- **Service Pattern**: Business logic layer (HN, Jina, Gemini, Pipeline)
-- **Constructor Injection**: All dependencies injected via constructor
-- **Interface-first**: Every service has an interface for testability
-- **Composition Root**: API route handlers wire real implementations
+The project has two parts:
+- **Frontend** (`src/`) — Next.js app deployed on Vercel, reads articles from Supabase
+- **Backend** (`supabase/`) — Edge Function + pg_cron, deployed on Supabase
 
 ## Getting Started
 
 ### Prerequisites
 - Node.js 18+
-- Supabase account (free)
-- Google Gemini API key (free)
+- Supabase account (free) — [supabase.com](https://supabase.com)
+- Google Gemini API key (free) — [aistudio.google.com](https://aistudio.google.com)
+- Jina API key (optional) — [jina.ai](https://jina.ai)
 
 ### 1. Clone and install
 
@@ -54,9 +53,10 @@ cd daily-news
 npm install
 ```
 
-### 2. Set up Supabase
+### 2. Set up Supabase project
 
-Create a Supabase project and run this SQL in the SQL Editor:
+1. Create a new project at [supabase.com/dashboard](https://supabase.com/dashboard)
+2. Run this SQL in the **SQL Editor** to create the articles table:
 
 ```sql
 CREATE TABLE articles (
@@ -78,41 +78,36 @@ CREATE POLICY "Public read access" ON articles FOR SELECT USING (true);
 CREATE POLICY "Service insert access" ON articles FOR INSERT WITH CHECK (true);
 ```
 
-### 3. Configure environment
+### 3. Deploy the Edge Function (backend)
+
+See [`supabase/README.md`](supabase/README.md) for full instructions on deploying the Edge Function and setting up the daily cron schedule.
+
+### 4. Configure the frontend
 
 ```bash
 cp .env.example .env.local
 ```
 
-Edit `.env.local` with your actual values:
-- `NEXT_PUBLIC_SUPABASE_URL` - from Supabase project settings
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY` - from Supabase project settings
-- `GOOGLE_GEMINI_API_KEY` - from Google AI Studio
-- `TRIGGER_SECRET` - any secret string for manual trigger auth
-- `CRON_SECRET` - any secret string for cron job auth
-- `JINA_API_KEY` - (optional) for higher Jina rate limits
+Edit `.env.local` — you only need two values (from your Supabase project settings > API):
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 
-### 4. Run locally
+### 5. Run the frontend locally
 
 ```bash
 npm run dev
 ```
 
-### 5. Trigger manually
+### 6. Test the trigger button
 
-```bash
-curl -X POST http://localhost:3000/api/trigger \
-  -H "Authorization: Bearer <your-trigger-secret>"
-```
+Click "Trigger Summary" in the UI and enter your `TRIGGER_SECRET` when prompted. This calls the Edge Function directly.
 
-Or use the "Trigger Summary" button in the UI (prompts for secret).
-
-### 6. Deploy to Vercel
+### 7. Deploy the frontend to Vercel
 
 1. Push to GitHub
-2. Import project in Vercel
-3. Set all environment variables in Vercel dashboard
-4. Deploy - cron job will auto-register from `vercel.json`
+2. Import the project in [Vercel](https://vercel.com)
+3. Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` in Vercel dashboard
+4. Deploy
 
 ## Scripts
 
@@ -125,37 +120,22 @@ npm run test:watch   # Run tests in watch mode
 npm run test:coverage # Run tests with coverage report
 ```
 
-## API Endpoints
-
-| Method | Endpoint | Auth | Description |
-|--------|---------|------|-------------|
-| POST | /api/trigger | Bearer TRIGGER_SECRET | Manual trigger |
-| GET | /api/cron | Bearer CRON_SECRET | Vercel cron (daily 8am UTC) |
-
 ## Environment Variables
+
+### Frontend (Next.js) — set in `.env.local` or Vercel dashboard
 
 | Variable | Required | Description |
 |----------|----------|-------------|
 | NEXT_PUBLIC_SUPABASE_URL | Yes | Supabase project URL |
 | NEXT_PUBLIC_SUPABASE_ANON_KEY | Yes | Supabase anon key |
+
+### Backend (Edge Function) — set via `npx supabase secrets set`
+
+| Variable | Required | Description |
+|----------|----------|-------------|
 | GOOGLE_GEMINI_API_KEY | Yes | Gemini API key |
-| TRIGGER_SECRET | Yes | Manual trigger auth secret |
-| CRON_SECRET | Yes | Vercel cron auth secret |
-| JINA_API_KEY | No | Jina Reader API key |
-
-For local development, use `.env.local` (gitignored). For production, set in Vercel dashboard.
-
-## Testing
-
-57 tests across 12 test suites with 99%+ coverage:
-
-```
------------------------|---------|----------|---------|---------|
-File                   | % Stmts | % Branch | % Funcs | % Lines |
------------------------|---------|----------|---------|---------|
-All files              |   99.35 |    93.75 |     100 |   99.35 |
------------------------|---------|----------|---------|---------|
-```
+| TRIGGER_SECRET | Yes | Auth secret for the Edge Function |
+| JINA_API_KEY | No | Jina Reader API key (higher rate limits) |
 
 ## License
 

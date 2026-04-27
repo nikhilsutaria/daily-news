@@ -15,8 +15,15 @@ export default function TriggerButton() {
     setStatus("loading");
     setMessage("");
 
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    if (!supabaseUrl) {
+      setStatus("error");
+      setMessage("Supabase URL not configured");
+      return;
+    }
+
     try {
-      const response = await fetch("/api/trigger", {
+      const response = await fetch(`${supabaseUrl}/functions/v1/run-pipeline`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${secret}`,
